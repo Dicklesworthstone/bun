@@ -57,7 +57,10 @@ impl Walker {
             // PORT NOTE: reshaped for borrowck — use index instead of holding `&mut` across push.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
-            match self.stack[top_idx].iter.next() {
+            // SAFETY: `base.name` borrows the iterator's scratch buffer; we
+            // consume (`base.kind` check) or copy (`new_path.extend_from_slice`
+            // via `to_vec` below) before the next `next()` call.
+            match unsafe { self.stack[top_idx].iter.next() } {
                 Err(err) => return Err(err),
                 Ok(res) => {
                     if let Some(base) = res {

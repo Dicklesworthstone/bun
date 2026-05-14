@@ -2094,7 +2094,10 @@ impl RealFS {
         // checks) out of the per-entry loop.
         let mut filename_store = FilenameStoreAppender::new();
 
-        while let Some(entry_) = iter.next()? {
+        // SAFETY: `entry_.name` borrows the iterator's scratch buffer.
+        // `add_entry_with_store` copies the name into `filename_store` (a
+        // process-lifetime arena) before this loop iteration ends.
+        while let Some(entry_) = unsafe { iter.next() }? {
             debug!("readdir entry {}", BStr::new(entry_.name.slice_u8()));
 
             dir.add_entry_with_store(

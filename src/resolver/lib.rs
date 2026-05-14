@@ -1103,7 +1103,10 @@ pub mod fs {
             }
 
             let mut filename_store = FilenameStoreAppender::new();
-            while let Some(entry_) = iter.next()? {
+            // SAFETY: `entry_.name` borrows the iterator's scratch buffer.
+            // `add_entry_with_store` copies the name into `filename_store`
+            // (process-lifetime arena) before this loop iteration ends.
+            while let Some(entry_) = unsafe { iter.next() }? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
                 dir.add_entry_with_store(
                     prev_map.as_deref_mut(),
@@ -7028,7 +7031,10 @@ pub mod __phase_a_body {
                 // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
                 // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
                 let mut filename_store = FilenameStoreAppender::new();
-                while let Ok(Some(_value)) = dir_iterator.next() {
+                // SAFETY: `_value.name` borrows the iterator's scratch buffer.
+                // `add_entry_with_store` copies the name into `filename_store`
+                // (process-lifetime arena) before this loop iteration ends.
+                while let Ok(Some(_value)) = unsafe { dir_iterator.next() } {
                     new_entry
                         .add_entry_with_store(
                             // SAFETY: see block-wide note above.
@@ -8119,7 +8125,11 @@ pub mod __phase_a_body {
                     // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
                     let mut filename_store = FilenameStoreAppender::new();
                     loop {
-                        let _value = match dir_iterator.next() {
+                        // SAFETY: `_value.name` borrows the iterator's scratch
+                        // buffer. `add_entry_with_store` copies the name into
+                        // `filename_store` (process-lifetime arena) before the
+                        // next iteration.
+                        let _value = match unsafe { dir_iterator.next() } {
                             Ok(Some(v)) => v,
                             Ok(None) => break,
                             Err(_) => break,

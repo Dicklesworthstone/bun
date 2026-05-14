@@ -213,7 +213,11 @@ impl AccessorDirIter for SyscallDirIter {
 
     #[inline]
     fn next(&mut self) -> Maybe<Option<DirIterator::IteratorResult>> {
-        self.value.next()
+        // SAFETY: GlobWalker's only in-tree consumer (`iter_next` in this
+        // file) reads `entry.name_slice()` and either copies via
+        // `prepare_matched_path` / `self.walker.join` or matches on
+        // `entry.kind()` — always before the next `.next()` call.
+        unsafe { self.value.next() }
     }
 
     #[inline]

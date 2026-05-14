@@ -2137,7 +2137,10 @@ mod _async_tasks {
             let mut iterator = DirIterator::iterate::<true>(fd);
             #[cfg(not(windows))]
             let mut iterator = DirIterator::iterate::<false>(fd);
-            let mut entry = iterator.next();
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer and is
+            // consumed (via `CpSingleTask::create` / the `.name.slice()` below)
+            // before the next `iterator.next()` overwrites it.
+            let mut entry = unsafe { iterator.next() };
             loop {
                 let current = match entry {
                     Err(err) => {
@@ -2222,7 +2225,8 @@ mod _async_tasks {
                         );
                     }
                 }
-                entry = iterator.next();
+                // SAFETY: previous `entry` has already been consumed above.
+                entry = unsafe { iterator.next() };
             }
 
             true
@@ -6507,7 +6511,10 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is consumed (via `T::append_entry`, which copies) before the
+            // next loop iteration calls `iterator.next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     for item in entries.iter_mut() {
                         item.destroy_entry();
@@ -6571,7 +6578,10 @@ impl NodeFS {
         };
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is consumed (via `T::append_entry_w`, which copies) before the
+            // next loop iteration calls `iterator.next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     for item in entries.iter_mut() {
                         item.destroy_entry();
@@ -6678,7 +6688,10 @@ impl NodeFS {
         let mut dirent_path_prev = BunString::EMPTY;
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is copied via `name_to_copy.to_vec()` / similar before this loop
+            // iteration ends and the next `iterator.next()` overwrites it.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     dirent_path_prev.deref();
                     if !is_root {
@@ -6875,7 +6888,9 @@ impl NodeFS {
             let mut dirent_path_prev = BunString::DEAD;
 
             loop {
-                let current = match iterator.next() {
+                // SAFETY: `current.name` borrows the iterator's scratch buffer
+                // and is copied via `append_entry` before the next `next()`.
+                let current = match unsafe { iterator.next() } {
                     Err(err) => {
                         dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
@@ -8421,7 +8436,9 @@ impl NodeFS {
         let mut iterator = DirIterator::WrappedIterator::init(fd);
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is copied into `src_buf` / `dest_buf` before the next `next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd])));
                 }
@@ -9864,7 +9881,9 @@ pub fn zig_delete_tree(
         let top_idx = stack.len() - 1;
         loop {
             // Re-borrow `top` each iteration so pushing to `stack` below is allowed.
-            let entry = match stack[top_idx].iter.next() {
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer — we
+            // copy it out below (`entry_name`) before the next `next()` call.
+            let entry = match unsafe { stack[top_idx].iter.next() } {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
@@ -10060,7 +10079,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         let result: Result<(), bun_core::Error> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
-                let entry = match dir_it.next() {
+                // SAFETY: `entry.name` borrows the iterator's scratch buffer —
+                // copied to `entry_name` below before the next `next()`.
+                let entry = match unsafe { dir_it.next() } {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),

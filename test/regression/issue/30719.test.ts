@@ -11,31 +11,30 @@
 //   init.slice();  // UB — dangling &[u8]
 //
 // The fix makes `init` an `unsafe fn` with a documented outlives
-// contract. This test asserts the signature stays `unsafe`: without the
-// fix applied, the signature is plain `pub fn init`, which means any
-// future revert (or accidental un-unsafe-ing) will trip this test
-// before review.
+// contract, plus closes the parallel hole in `dir_iterator::next()`
+// (which hands out `IteratorResult { name: PathString }` bound to the
+// iterator's scratch buffer, invalidated on the next call).
 //
-// Runtime assertion (rather than a JS-observable behavior check)
-// because the bug is an API-surface soundness hole, not a reachable
-// crash from safe call sites in the tree — every in-tree caller was
-// already sound. The regression guarded here is "someone removes
-// `unsafe` from `PathString::init` and reopens the hole".
+// This test asserts both signatures stay `unsafe`. Any revert (or
+// accidental un-unsafe-ing) trips this test before review.
+//
+// Runtime assertion on the source (rather than a JS-observable behavior
+// check) because the bug is an API-surface soundness hole — every
+// in-tree call site was already sound in practice. The regression
+// guarded here is "someone removes `unsafe` and reopens the hole".
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-test("PathString::init is declared unsafe (soundness invariant for #30719)", () => {
-  // Resolve relative to the repo root — this test file lives at
-  // test/regression/issue/30719.test.ts, the source at
-  // src/bun_core/string/PathString.rs. Walk up two directories from
-  // test/regression/issue/ to reach the repo root.
-  const repoRoot = join(import.meta.dir, "..", "..", "..");
-  const src = readFileSync(join(repoRoot, "src/bun_core/string/PathString.rs"), "utf8");
+const repoRoot = join(import.meta.dir, "..", "..", "..");
 
-  // Normalize whitespace so a reformat doesn't spuriously break this.
-  const normalized = src.replace(/\s+/g, " ");
+function normalizedSource(relative: string): string {
+  return readFileSync(join(repoRoot, relative), "utf8").replace(/\s+/g, " ");
+}
+
+test("PathString::init is declared unsafe (soundness invariant for #30719)", () => {
+  const normalized = normalizedSource("src/bun_core/string/PathString.rs");
 
   // Positive: unsafe signature is present.
   expect(normalized).toContain("pub unsafe fn init(str: &[u8]) -> Self");
@@ -43,4 +42,20 @@ test("PathString::init is declared unsafe (soundness invariant for #30719)", () 
   // Negative: the plain-safe signature (the bug) is NOT present. If
   // someone drops the `unsafe` keyword, this assertion fires.
   expect(normalized).not.toContain("pub fn init(str: &[u8]) -> Self");
+});
+
+test("dir_iterator::next() is declared unsafe (parallel soundness hole for #30719)", () => {
+  // `bun_sys::dir_iterator::WrappedIterator::next()` returns an
+  // `IteratorResult` whose `name: PathString` borrows the iterator's
+  // internal getdents scratch. Calling `next()` again overwrites that
+  // buffer. Marking `next()` `unsafe` forces callers to acknowledge the
+  // streaming-iterator contract.
+  const normalized = normalizedSource("src/sys/lib.rs");
+
+  expect(normalized).toContain(
+    "pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>>",
+  );
+  expect(normalized).not.toContain(
+    "pub fn next(&mut self) -> Result<Option<IteratorResult>>",
+  );
 });

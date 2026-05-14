@@ -618,7 +618,10 @@ impl<'a> NamesIterator<'a> {
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
-        if let Some(entry) = iter.next().unwrap_or(None) {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; copied
+        // into `self.buf` via `strings::copy` before returning (next call to
+        // this fn's `iter.next()` overwrites the borrow).
+        if let Some(entry) = unsafe { iter.next() }.unwrap_or(None) {
             self.i += 1;
             let name = entry.name.slice_u8();
             Ok(Some(strings::copy(&mut self.buf[..], name)))
