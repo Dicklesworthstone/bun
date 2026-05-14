@@ -712,8 +712,16 @@ impl ShellCpTask {
 
         let args = crate::node::fs::args::Cp {
             // SAFETY: `self.src_absolute` / `self.tgt_absolute` are owned
-            // `Vec<u8>` stored on `self` — they outlive `args` for the call
-            // below (deinit_paths: false means `args` does not take ownership).
+            // `Vec<u8>` stored on `self`. `args` is moved into
+            // `ShellAsyncCpTask::create_{with_shell_task,mini}` below, which
+            // schedules it on the work pool with a `ParentRef` backref to
+            // `self` (`shelltask: *mut ShellCpTask`). The Vecs (and thus the
+            // `PathString` bytes) must remain valid until `cp_on_finish` ->
+            // `on_shell_cp_task_done` releases the parent — guaranteed by
+            // the backref / `shelltask` contract, NOT by `args`'s lifetime.
+            // Do NOT clear `self.src_absolute` / `self.tgt_absolute` before
+            // the async task completes. `deinit_paths: false` means the
+            // async task does not own these bytes.
             src: bun_jsc::node::PathLike::String(unsafe {
                 bun_core::PathString::init(self.src_absolute.as_deref().unwrap())
             }),

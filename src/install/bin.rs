@@ -1591,6 +1591,15 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; `entry_name = entry.name.slice_u8()` is copied
+                    // into `self.abs_target_buf` via `join_abs_string_buf_z`
+                    // below within this iteration before the next
+                    // `iter.next()` call.
+                    // Note: this sits inside a larger `unsafe { match
+                    // self.bin.tag { ... } }` whose SAFETY comment covers the
+                    // `Bin.value` union access; the streaming-iterator
+                    // contract is documented here instead.
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1724,6 +1733,14 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; `entry_name = entry.name.slice_u8()` is copied
+                    // into `self.abs_dest_buf` below within this iteration
+                    // before the next `iter.next()` call.
+                    // Note: this sits inside a larger `unsafe { match
+                    // self.bin.tag { ... } }` whose SAFETY comment covers the
+                    // `Bin.value` union access; the streaming-iterator
+                    // contract is documented here instead.
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {

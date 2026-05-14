@@ -57,3 +57,18 @@ test("dir_iterator::next() is declared unsafe (parallel soundness hole for #3071
   expect(normalized).toContain("pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>>");
   expect(normalized).not.toContain("pub fn next(&mut self) -> Result<Option<IteratorResult>>");
 });
+
+test("runtime/node/dir_iterator NewWrappedIterator::next is declared unsafe (#30719)", () => {
+  // The parallel hole at the higher-tier iterator: `NewWrappedIterator::next`
+  // (POSIX `-> Result`, Windows `-> ResultW`) wraps the per-platform
+  // `NewIterator::next`. Reverting any of these to safe `pub fn` would
+  // only produce `unused_unsafe` warnings at callers and would re-open
+  // the streaming-iterator hole — hence this assertion is source-textual,
+  // independent of the `bun_sys` one above.
+  const normalized = normalizedSource("src/runtime/node/dir_iterator.rs");
+
+  // POSIX / FreeBSD / Linux / macOS / WASI all hit `NewWrappedIterator<false>`.
+  expect(normalized).toContain("pub unsafe fn next(&mut self) -> Result");
+  // Ensure no safe counterpart reappears.
+  expect(normalized).not.toMatch(/\bpub fn next\(&mut self\) -> Result(W\b|\s)/);
+});
