@@ -323,7 +323,11 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
+            // SAFETY: `filepath` is a local owned buffer that outlives `args`
+            // through the synchronous mkdir calls below.
+            path: PathLike::String(unsafe {
+                bun_core::PathString::init(filepath.as_bytes())
+            }),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

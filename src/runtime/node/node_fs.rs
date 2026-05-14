@@ -651,7 +651,10 @@ mod _async_tasks {
                 // SAFETY: caller keeps `path` alive until completion
                 let path = unsafe { &*this.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(PathString::init(path)),
+                    // SAFETY: `path` is kept alive by the caller for the duration
+                    // of this synchronous `mkdir_recursive` call; PathString does
+                    // not escape.
+                    path: PathLike::String(unsafe { PathString::init(path) }),
                     recursive: true,
                     ..Default::default()
                 });
@@ -2414,7 +2417,9 @@ mod _async_tasks {
             // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
             // reconstructed and freed in `ReaddirSubtask::run_owned`.
             let leaked: &'static mut [u8] = Box::leak(owned);
-            let basename_ps = PathString::init(&leaked[..len]);
+            // SAFETY: `leaked` is `&'static mut [u8]` — process lifetime,
+            // reclaimed by `ReaddirSubtask::run_owned` via the `Box<[u8]>`.
+            let basename_ps = unsafe { PathString::init(&leaked[..len]) };
             // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
             // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
@@ -2456,7 +2461,9 @@ mod _async_tasks {
                 // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
                 // in `free_root_path()`.
                 let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
-                PathString::init(&leaked[..len])
+                // SAFETY: `leaked` is `&'static mut [u8]` — reclaimed later by
+                // `free_root_path()` via the `Box<[u8]>`.
+                unsafe { PathString::init(&leaked[..len]) }
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {
                 promise: JSPromiseStrong::init(global_object),
@@ -9183,7 +9190,11 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(PathString::init(&bytes[..len])),
+                        // SAFETY: `bytes` borrows `dest`, which outlives this
+                        // synchronous `mkdir_recursive` call.
+                        path: PathLike::String(unsafe {
+                            PathString::init(&bytes[..len])
+                        }),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9680,7 +9691,9 @@ pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char)
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     !matches!(
         node_fs.mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(PathString::init(path_bytes)),
+            // SAFETY: `path_bytes` is the C string passed in by the caller; it
+            // outlives this synchronous `mkdir_recursive` call.
+            path: PathLike::String(unsafe { PathString::init(path_bytes) }),
             recursive: true,
             ..Default::default()
         }),

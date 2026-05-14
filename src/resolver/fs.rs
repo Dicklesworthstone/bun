@@ -2839,7 +2839,11 @@ impl RealFS {
             cache.kind = EntryKind::File;
         }
         if !symlink.is_empty() {
-            cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
+            // SAFETY: `FilenameStore::instance().append` returns a slice into
+            // the process-lifetime filename arena.
+            cache.symlink = unsafe {
+                PathString::init(FilenameStore::instance().append(symlink)?)
+            };
         }
 
         Ok(cache)
@@ -2955,7 +2959,11 @@ impl RealFS {
             // round-trip via `usize` (HANDLE is pointer-sized).
             match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
                 bun_sys::Result::Ok(real) => {
-                    cache.symlink = PathString::init(FilenameStore::instance().append(real)?);
+                    // SAFETY: `FilenameStore::instance().append` returns a
+                    // slice into the process-lifetime filename arena.
+                    cache.symlink = unsafe {
+                        PathString::init(FilenameStore::instance().append(real)?)
+                    };
                 }
                 bun_sys::Result::Err(_) => {}
             }
@@ -3014,7 +3022,11 @@ impl RealFS {
                 cache.kind = EntryKind::File;
             }
             if !symlink.is_empty() {
-                cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
+                // SAFETY: `FilenameStore::instance().append` returns a slice
+                // into the process-lifetime filename arena.
+                cache.symlink = unsafe {
+                    PathString::init(FilenameStore::instance().append(symlink)?)
+                };
             }
 
             Ok(cache)

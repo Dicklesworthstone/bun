@@ -711,12 +711,15 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_core::PathString::init(
-                self.src_absolute.as_deref().unwrap(),
-            )),
-            dest: bun_jsc::node::PathLike::String(bun_core::PathString::init(
-                self.tgt_absolute.as_deref().unwrap(),
-            )),
+            // SAFETY: `self.src_absolute` / `self.tgt_absolute` are owned
+            // `Vec<u8>` stored on `self` — they outlive `args` for the call
+            // below (deinit_paths: false means `args` does not take ownership).
+            src: bun_jsc::node::PathLike::String(unsafe {
+                bun_core::PathString::init(self.src_absolute.as_deref().unwrap())
+            }),
+            dest: bun_jsc::node::PathLike::String(unsafe {
+                bun_core::PathString::init(self.tgt_absolute.as_deref().unwrap())
+            }),
             flags: crate::node::fs::args::CpFlags {
                 mode: crate::node::fs::constants::Copyfile::from_raw(0),
                 recursive: self.opts.recursive,

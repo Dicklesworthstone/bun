@@ -222,7 +222,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -322,7 +325,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -428,7 +434,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -491,7 +500,10 @@ mod platform {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
             IteratorResult {
-                name: PathString::init(name_utf8.as_bytes()),
+                // SAFETY: `name_utf8` borrows the caller-owned `name_data` buffer;
+                // the returned IteratorResult is bound to that borrow in the
+                // streaming-iterator call.
+                name: unsafe { PathString::init(name_utf8.as_bytes()) },
                 kind,
             }
         }
@@ -844,7 +856,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
