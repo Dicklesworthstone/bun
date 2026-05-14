@@ -811,6 +811,37 @@ identity(mod23);
   expect(text).toContain(" globalThis.");
 });
 
+// `Bun.build({ define: { X: "..." } })` auto-quotes an unquoted env-style
+// string value whose first character isn't a valid JSON start token. Zig's
+// JSON lexer produces a plain token (`*` → t_asterisk, `(` → t_open_paren,
+// etc.) without erroring, and the parser's auto-quote path in parseEnvJSON
+// re-reads the whole content as a string literal. The Rust port incorrectly
+// rejected several of those characters at lex time with "Operators are not
+// allowed in JSON", which broke the bake-codegen step for the dev-server
+// overlay stylesheet (`OVERLAY_CSS: <css>` starts with `*{...}`) and any
+// user code that passed a similar raw string.
+test("define value that starts with a non-JSON character is auto-quoted", async () => {
+  const dir = tempDirWithFiles("bun-build-api-define-autoquote", {
+    "entry.js": `console.log(CSS_BLOB); console.log(PAREN_PREFIX); console.log(QUESTION_PREFIX);`,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(dir, "entry.js")],
+    define: {
+      // Mirrors bake-codegen's `OVERLAY_CSS: css(...)` — CSS starts with `*`.
+      CSS_BLOB: "*{box-sizing:border-box}.root{all:initial}",
+      PAREN_PREFIX: "(",
+      QUESTION_PREFIX: "?maybe",
+    },
+  });
+  expect(result.logs).toEqual([]);
+  expect(result.success).toBe(true);
+  const text = await result.outputs[0].text();
+  // Each define value should appear as a quoted string in the output.
+  expect(text).toContain('"*{box-sizing:border-box}.root{all:initial}"');
+  expect(text).toContain('"("');
+  expect(text).toContain('"?maybe"');
+});
+
 describe.concurrent("sourcemap boolean values", () => {
   test("sourcemap: true should work (boolean)", async () => {
     const dir = tempDirWithFiles("sourcemap-true-boolean", {

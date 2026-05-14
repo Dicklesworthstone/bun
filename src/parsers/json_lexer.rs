@@ -1295,20 +1295,28 @@ where
                 cp if cp == '~' as CodePoint => {
                     return self.add_unsupported_syntax_error("~ is not allowed in JSON");
                 }
-                cp if cp == '?' as CodePoint
-                    || cp == '%' as CodePoint
+                // PORT NOTE: Zig's lexer does NOT error on `?`, `*`, `(`, `)`,
+                // or `` ` `` in JSON mode — it produces their respective tokens
+                // (t_question / t_asterisk / t_open_paren / t_close_paren /
+                // template-literal) without an is_json guard (lexer.zig:1241,
+                // 1449, 1462, 1468, 1700-1704). The parser's auto-quote path
+                // (parseEnvJSON → parseExpr(maybe_auto_quote=true) → reinit +
+                // parseStringLiteral(0)) relies on the lexer not hard-erroring
+                // so an unquoted env-style value starting with one of those
+                // characters is re-read as a string. The previous blanket
+                // rejection broke `Bun.build({ define: { X: "*..." } })` for
+                // any value whose first character was such a token — including
+                // the bake-codegen OVERLAY_CSS (starts with `*{...}`), which
+                // made the release build's bake codegen step fail.
+                cp if cp == '%' as CodePoint
                     || cp == '&' as CodePoint
                     || cp == '|' as CodePoint
                     || cp == '^' as CodePoint
                     || cp == '+' as CodePoint
-                    || cp == '*' as CodePoint
                     || cp == '=' as CodePoint
                     || cp == '<' as CodePoint
                     || cp == '>' as CodePoint
-                    || cp == '!' as CodePoint
-                    || cp == '(' as CodePoint
-                    || cp == ')' as CodePoint
-                    || cp == '`' as CodePoint =>
+                    || cp == '!' as CodePoint =>
                 {
                     return self.add_unsupported_syntax_error("Operators are not allowed in JSON");
                 }
