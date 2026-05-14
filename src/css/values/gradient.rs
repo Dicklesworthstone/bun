@@ -38,7 +38,7 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
 // satisfy `DimensionPercentage<D>: CalcValue` in `calc.rs`. A blanket impl
 // would need to re-state that bound; concrete impls are simpler and match
-// the Zig monomorphization sites exactly.
+// the original monomorphization sites exactly.
 macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
@@ -447,7 +447,11 @@ impl LinearGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
-        let fallback_items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let fallback_items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         LinearGradient {
             direction: self.direction.clone(),
@@ -525,7 +529,11 @@ impl RadialGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
-        let items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         RadialGradient {
             shape: self.shape.clone(),
@@ -617,7 +625,11 @@ impl ConicGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
-        let items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         ConicGradient {
             angle: self.angle.clone(),
@@ -779,7 +791,11 @@ impl WebKitGradient {
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
-                let stops: Vec<_> = linear.stops.iter().map(|s| s.get_fallback(bump, kind)).collect();
+                let stops: Vec<_> = linear
+                    .stops
+                    .iter()
+                    .map(|s| s.get_fallback(bump, kind))
+                    .collect();
                 WebKitGradient::Linear(WebKitGradientLinear {
                     from: linear.from.clone(),
                     to: linear.to.clone(),
@@ -787,7 +803,11 @@ impl WebKitGradient {
                 })
             }
             WebKitGradient::Radial(radial) => {
-                let stops: Vec<_> = radial.stops.iter().map(|s| s.get_fallback(bump, kind)).collect();
+                let stops: Vec<_> = radial
+                    .stops
+                    .iter()
+                    .map(|s| s.get_fallback(bump, kind))
+                    .collect();
                 WebKitGradient::Radial(WebKitGradientRadial {
                     from: radial.from.clone(),
                     r0: radial.r0,
@@ -1486,7 +1506,7 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     let mut seen_stop = false;
 
     loop {
-        // PORT NOTE: reshaped for borrowck — Zig used a Closure { items: *ArrayList, seen_stop: *bool }
+        // PORT NOTE: reshaped for borrowck — the original used a `Closure { items, seen_stop }`
         // captured into parseUntilBefore; here we close over &mut locals directly.
         input.parse_until_before(
             css::Delimiters::COMMA,
@@ -1609,5 +1629,3 @@ pub fn convert_stops_to_webkit(
 
     Some(stops)
 }
-
-// ported from: src/css/values/gradient.zig

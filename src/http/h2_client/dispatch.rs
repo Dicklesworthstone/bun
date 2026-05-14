@@ -30,7 +30,9 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
             break;
         }
         let mut header = wire::FrameHeader::decode(
-            remaining[0..wire::FrameHeader::BYTE_SIZE].try_into().unwrap(),
+            remaining[0..wire::FrameHeader::BYTE_SIZE]
+                .try_into()
+                .unwrap(),
         );
         let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
         header.stream_identifier = sid;
@@ -62,7 +64,7 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
     consumed
 }
 
-// PORT NOTE: Zig's `wire.FrameType` is non-exhaustive (any u8 valid). A
+// PORT NOTE: `wire.FrameType` is conceptually non-exhaustive (any u8 valid). A
 // `#[repr(u8)]` Rust enum is UB for unknown discriminants, so dispatch on the
 // raw u8.
 const FT_DATA: u8 = wire::FrameType::HTTP_FRAME_DATA as u8;
@@ -737,7 +739,7 @@ pub fn is_malformed_response_field(name: &[u8]) -> bool {
             return true;
         }
     }
-    // PORT NOTE: Zig used a comptime string set; small enough to open-code.
+    // PORT NOTE: was a compile-time string set; small enough to open-code.
     matches!(
         name,
         b"connection"
@@ -766,5 +768,3 @@ pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
         _ => wire::ErrorCode::INTERNAL_ERROR,
     }
 }
-
-// ported from: src/http/h2_client/dispatch.zig
