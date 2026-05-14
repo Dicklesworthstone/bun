@@ -696,8 +696,9 @@ impl FileSink {
         // `openat_a`).
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            // SAFETY: the borrowed PathString outlives `options.input_path`
-            // for the full `open_for_writing` call below — we never store it.
+            // SAFETY: `slice.slice()` borrows `options.input_path`, which
+            // outlives `io_path` for the full `open_for_writing` call below
+            // — we never store the PathString.
             PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(unsafe {
                 bun_core::PathString::init(slice.slice())
             }),

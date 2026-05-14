@@ -27,6 +27,8 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// This test file lives at test/regression/issue/30719.test.ts; the repo
+// root is three levels up (issue → regression → test → root).
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 
 function normalizedSource(relative: string): string {
