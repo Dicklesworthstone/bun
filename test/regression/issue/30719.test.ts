@@ -52,10 +52,6 @@ test("dir_iterator::next() is declared unsafe (parallel soundness hole for #3071
   // streaming-iterator contract.
   const normalized = normalizedSource("src/sys/lib.rs");
 
-  expect(normalized).toContain(
-    "pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>>",
-  );
-  expect(normalized).not.toContain(
-    "pub fn next(&mut self) -> Result<Option<IteratorResult>>",
-  );
+  expect(normalized).toContain("pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>>");
+  expect(normalized).not.toContain("pub fn next(&mut self) -> Result<Option<IteratorResult>>");
 });
