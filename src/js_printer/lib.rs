@@ -107,6 +107,10 @@ pub mod analyze_transpiled_module {
         ExportInfoNamespace,
         /// module_name
         ExportInfoStar,
+        /// module_name, import_name = '*', local_name (import defer * as ns)
+        ImportInfoNamespaceDefer,
+        /// module_name (defer-phase requested module, deduped separately)
+        RequestedModuleDefer,
     }
     impl RecordKind {
         pub fn len(self) -> usize {
@@ -115,6 +119,8 @@ pub mod analyze_transpiled_module {
                 Self::ImportInfoSingle => 3,
                 Self::ImportInfoSingleTypeScript => 3,
                 Self::ImportInfoNamespace => 3,
+                Self::ImportInfoNamespaceDefer => 3,
+                Self::RequestedModuleDefer => 1,
                 Self::ExportInfoIndirect => 3,
                 Self::ExportInfoLocal => 3,
                 Self::ExportInfoNamespace => 2,
@@ -133,6 +139,8 @@ pub mod analyze_transpiled_module {
                 6 => Self::ExportInfoLocal,
                 7 => Self::ExportInfoNamespace,
                 8 => Self::ExportInfoStar,
+                9 => Self::ImportInfoNamespaceDefer,
+                10 => Self::RequestedModuleDefer,
                 _ => return None,
             })
         }
@@ -473,6 +481,10 @@ pub mod analyze_transpiled_module {
         strings_buf: Vec<u8>,
         strings_lens: Vec<u32>,
         requested_modules: OrderedMap<StringID, FetchParameters>,
+        // Collection-time dedupe set for defer-phase requested modules; mirrors
+        // JSC ModuleAnalyzer's per-(specifier, phase) dedup. Never serialized —
+        // the actual records live in `buffer`/`record_kinds`.
+        requested_modules_defer: HashMap<StringID, ()>,
         buffer: Vec<StringID>,
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
@@ -490,6 +502,7 @@ pub mod analyze_transpiled_module {
                 strings_buf: Vec::new(),
                 strings_lens: Vec::new(),
                 requested_modules: OrderedMap::default(),
+                requested_modules_defer: HashMap::default(),
                 buffer: Vec::new(),
                 record_kinds: Vec::new(),
                 flags: Flags {
@@ -557,6 +570,25 @@ pub mod analyze_transpiled_module {
                 RecordKind::ImportInfoNamespace,
                 &[module_name, StringID::STAR_NAMESPACE, local_name],
             );
+        }
+        pub fn add_import_info_namespace_defer(
+            &mut self,
+            module_name: StringID,
+            local_name: StringID,
+        ) {
+            self.add_record(
+                RecordKind::ImportInfoNamespaceDefer,
+                &[module_name, StringID::STAR_NAMESPACE, local_name],
+            );
+        }
+        pub fn add_requested_module_defer(&mut self, module_name: StringID) {
+            // JSC's ModuleAnalyzer dedups per (specifier, phase); mirror that here
+            // so the debug fallbackParse() diff in BunAnalyzeTranspiledModule.cpp
+            // agrees when the same specifier is deferred more than once.
+            if self.requested_modules_defer.insert(module_name, ()).is_some() {
+                return;
+            }
+            self.add_record(RecordKind::RequestedModuleDefer, &[module_name]);
         }
         pub fn add_export_info_indirect(
             &mut self,
@@ -669,6 +701,10 @@ pub mod analyze_transpiled_module {
                             },
                         );
                     } else if k == RecordKind::ImportInfoNamespace {
+                        // Deliberately excludes ImportInfoNamespaceDefer: a deferred
+                        // namespace object lives in THIS module's environment, so
+                        // `export { ns }` must stay a Local export (proposal ParseModule
+                        // 11.a.ii). JSC's ModuleAnalyzer::exportVariable does the same.
                         local_name_to_module_name.insert(
                             self.buffer[i + 2],
                             LocalImport {
@@ -3029,7 +3065,11 @@ pub mod __gated_printer {
 
             // Allow it to fail at runtime, if it should
             if module_type != bundle_opts::Format::InternalBakeDev {
-                self.print(b"import(");
+                match record.phase {
+                    bun_ast::ImportPhase::Evaluation => self.print(b"import("),
+                    bun_ast::ImportPhase::Defer => self.print(b"import.defer("),
+                    bun_ast::ImportPhase::Source => self.print(b"import.source("),
+                }
                 self.print_import_record_path(record);
             } else {
                 self.print_symbol(self.options.hmr_ref);
@@ -3654,7 +3694,11 @@ pub mod __gated_printer {
                             self.print_symbol(self.options.hmr_ref);
                             self.print(b".dynamicImport(");
                         } else {
-                            self.print(b"import(");
+                            match e.phase {
+                                bun_ast::ImportPhase::Evaluation => self.print(b"import("),
+                                bun_ast::ImportPhase::Defer => self.print(b"import.defer("),
+                                bun_ast::ImportPhase::Source => self.print(b"import.source("),
+                            }
                         }
                         // TODO: leading_interior_comments
                         self.print_expr(e.expr, Level::Comma, ExprFlag::none());
@@ -6017,6 +6061,11 @@ pub mod __gated_printer {
                     }
 
                     self.print(b"import");
+                    match record.phase {
+                        bun_ast::ImportPhase::Evaluation => {}
+                        bun_ast::ImportPhase::Defer => self.print(b" defer"),
+                        bun_ast::ImportPhase::Source => self.print(b" source"),
+                    }
 
                     let mut item_count: usize = 0;
 
@@ -6204,7 +6253,11 @@ pub mod __gated_printer {
                             } else {
                                 FP::None
                             };
-                            mi.request_module(irp_id, fetch_parameters);
+                            if record.phase == bun_ast::ImportPhase::Defer {
+                                mi.add_requested_module_defer(irp_id);
+                            } else {
+                                mi.request_module(irp_id, fetch_parameters);
+                            }
                             irp_id
                         };
 
@@ -6236,7 +6289,11 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                            mi.add_import_info_namespace(irp_id, local_name_id);
+                            if record.phase == bun_ast::ImportPhase::Defer {
+                                mi.add_import_info_namespace_defer(irp_id, local_name_id);
+                            } else {
+                                mi.add_import_info_namespace(irp_id, local_name_id);
+                            }
                         }
                     }
                 }

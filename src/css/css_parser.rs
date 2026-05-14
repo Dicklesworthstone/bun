@@ -921,6 +921,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             // are required); spell out the remaining defaults explicitly.
             tag: Default::default(),
             loader: None,
+            phase: Default::default(),
             source_index: Default::default(),
             module_id: 0,
             original_path: b"",
@@ -3014,6 +3015,7 @@ mod stylesheet_impl {
                             // remaining fields explicitly (matches on_import_rule above).
                             tag: Default::default(),
                             loader: None,
+                            phase: Default::default(),
                             source_index: Default::default(),
                             module_id: 0,
                             original_path: b"",
@@ -3526,6 +3528,7 @@ impl<'a> Parser<'a> {
                 },
                 tag: Default::default(),
                 loader: None,
+                phase: Default::default(),
                 source_index: Default::default(),
                 module_id: 0,
                 original_path: b"",
