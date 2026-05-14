@@ -970,9 +970,10 @@ fn iterate_bundled_deps(
             let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
-            // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
-            // entry is consumed within this loop iteration before the next
-            // `next()` call.
+            // SAFETY: `sub_entry.name` borrows `scoped_iter`'s scratch buffer;
+            // it is copied via `entry_subpath(_entry_name, sub_entry.name.slice_u8())`
+            // (which allocates a new path string) before the next
+            // `scoped_iter.next()` call.
             while let Some(sub_entry) = unsafe { scoped_iter.next() }.ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 

@@ -1893,7 +1893,10 @@ pub mod dir_entry_accessor {
         type Entry = DirEntryIterResult;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
+        // Entry name borrows the EntryStore key — this impl doesn't actually
+        // need `unsafe`, but the trait method is `unsafe fn` (to encode the
+        // streaming-iterator contract for other impls like `SyscallDirIter`).
+        unsafe fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
@@ -7031,10 +7034,18 @@ pub mod __phase_a_body {
                 // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
                 // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
                 let mut filename_store = FilenameStoreAppender::new();
-                // SAFETY: `_value.name` borrows the iterator's scratch buffer.
-                // `add_entry_with_store` copies the name into `filename_store`
-                // (process-lifetime arena) before this loop iteration ends.
-                while let Ok(Some(_value)) = unsafe { dir_iterator.next() } {
+                loop {
+                    // SAFETY: `_value.name` borrows the iterator's scratch buffer.
+                    // `add_entry_with_store` copies the name into `filename_store`
+                    // (process-lifetime arena) before this loop iteration ends.
+                    let _value = match unsafe { dir_iterator.next() } {
+                        Ok(Some(v)) => v,
+                        Ok(None) => break,
+                        // Propagate readdir failures rather than caching a partial
+                        // directory — a truncated cache can hide `package.json` /
+                        // `index.*` / symlink entries from later resolution.
+                        Err(err) => return Err(err.into()),
+                    };
                     new_entry
                         .add_entry_with_store(
                             // SAFETY: see block-wide note above.
@@ -8132,7 +8143,11 @@ pub mod __phase_a_body {
                         let _value = match unsafe { dir_iterator.next() } {
                             Ok(Some(v)) => v,
                             Ok(None) => break,
-                            Err(_) => break,
+                            // Propagate readdir failures rather than caching a
+                            // partial directory — a truncated cache can hide
+                            // `package.json` / `index.*` / symlink entries from
+                            // later resolution.
+                            Err(err) => return Err(err.into()),
                         };
                         new_entry
                             .add_entry_with_store(

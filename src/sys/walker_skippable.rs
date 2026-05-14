@@ -58,8 +58,10 @@ impl Walker {
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
             // SAFETY: `base.name` borrows the iterator's scratch buffer; we
-            // consume (`base.kind` check) or copy (`new_path.extend_from_slice`
-            // via `to_vec` below) before the next `next()` call.
+            // consume (`base.kind` check) or copy (via
+            // `self.name_buffer.extend_from_slice(base.name.as_slice())` below,
+            // or `open_dir_for_iteration_os_path` which copies into an opened
+            // fd) before the next `next()` call.
             match unsafe { self.stack[top_idx].iter.next() } {
                 Err(err) => return Err(err),
                 Ok(res) => {

@@ -2421,8 +2421,12 @@ mod _async_tasks {
             // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
             // reconstructed and freed in `ReaddirSubtask::run_owned`.
             let leaked: &'static mut [u8] = Box::leak(owned);
-            // SAFETY: `leaked` is `&'static mut [u8]` — process lifetime,
-            // reclaimed by `ReaddirSubtask::run_owned` via the `Box<[u8]>`.
+            // SAFETY: `basename_ps` is moved into the `ReaddirSubtask` below
+            // and read exactly once in `run_owned` (`basename.slice_assume_z()`)
+            // before the scopeguard in that same function reconstructs the
+            // `Box<[u8]>` and drops it. No `PathString` copy escapes that scope,
+            // so the `leaked` buffer is live for every `slice()` / `slice_assume_z()`
+            // call against this PathString.
             let basename_ps = unsafe { PathString::init(&leaked[..len]) };
             // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
             // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
@@ -2465,8 +2469,15 @@ mod _async_tasks {
                 // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
                 // in `free_root_path()`.
                 let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
-                // SAFETY: `leaked` is `&'static mut [u8]` — reclaimed later by
-                // `free_root_path()` via the `Box<[u8]>`.
+                // SAFETY: the returned PathString is stored as `self.root_path`
+                // on the `AsyncReaddirRecursiveTask`. `free_root_path` is the
+                // only function that reconstructs and drops the `Box<[u8]>`,
+                // and it runs only from `destroy()` / `finish_concurrently()`
+                // — by which point every subtask / `perform_work` path that
+                // reads `root_path.slice[_assume_z]()` has completed (gated
+                // on `subtask_count == 0`). Copies made in subtasks (Copy
+                // bound on PathString) share the same allocation and do not
+                // outlive their subtask's `slice_assume_z()` read.
                 unsafe { PathString::init(&leaked[..len]) }
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {

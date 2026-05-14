@@ -621,15 +621,26 @@ impl<'a> NamesIterator<'a> {
         // SAFETY: `entry.name` borrows the iterator's scratch buffer; copied
         // into `self.buf` via `strings::copy` before returning (next call to
         // this fn's `iter.next()` overwrites the borrow).
-        if let Some(entry) = unsafe { iter.next() }.unwrap_or(None) {
-            self.i += 1;
-            let name = entry.name.slice_u8();
-            Ok(Some(strings::copy(&mut self.buf[..], name)))
-        } else {
-            self.done = true;
-            let dir = self.dir_iterator.take().unwrap().dir();
-            dir.close();
-            Ok(None)
+        match unsafe { iter.next() } {
+            Ok(Some(entry)) => {
+                self.i += 1;
+                let name = entry.name.slice_u8();
+                Ok(Some(strings::copy(&mut self.buf[..], name)))
+            }
+            Ok(None) => {
+                self.done = true;
+                let dir = self.dir_iterator.take().unwrap().dir();
+                dir.close();
+                Ok(None)
+            }
+            Err(err) => {
+                // Propagate OS iteration errors instead of silently ending —
+                // a failed readdir could otherwise hide bin entries.
+                self.done = true;
+                let dir = self.dir_iterator.take().unwrap().dir();
+                dir.close();
+                Err(err.into())
+            }
         }
     }
 
