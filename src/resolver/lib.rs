@@ -7044,7 +7044,15 @@ pub mod __phase_a_body {
                         // Propagate readdir failures rather than caching a partial
                         // directory — a truncated cache can hide `package.json` /
                         // `index.*` / symlink entries from later resolution.
-                        Err(err) => return Err(err.into()),
+                        // Close `open_dir` first: this function is the sole owner
+                        // until ownership transfers into `new_entry.fd` (line ~7067,
+                        // `self.store_fd`) or `dir_info_uncached`'s `open_dir`
+                        // argument (line ~7123). Both transfer sites sit AFTER this
+                        // loop, so bailing here leaks the fd unless we close it.
+                        Err(err) => {
+                            open_dir.close();
+                            return Err(err.into());
+                        }
                     };
                     new_entry
                         .add_entry_with_store(
@@ -8147,7 +8155,28 @@ pub mod __phase_a_body {
                             // partial directory — a truncated cache can hide
                             // `package.json` / `index.*` / symlink entries from
                             // later resolution.
-                            Err(err) => return Err(err.into()),
+                            //
+                            // `open_dir` was either inherited from `queue_top.fd`
+                            // (in which case the queue still owns it — don't touch)
+                            // or freshly opened above and pushed onto
+                            // `bufs!(open_dirs)[..open_dir_count]`. The outer
+                            // `defer!` only closes those fds when
+                            // `!store_fd || need_to_close_files()`; in the
+                            // `store_fd && !need_to_close_files()` case the fd
+                            // would normally transfer into `new_entry.fd`
+                            // (line ~8175) but we're returning before that assign,
+                            // so pop-and-close to cover all branches without
+                            // risking a double-close via the defer.
+                            Err(err) => {
+                                if !queue_top.fd.is_valid() {
+                                    let prev = open_dir_count.get();
+                                    debug_assert!(prev > 0);
+                                    debug_assert_eq!(bufs!(open_dirs)[prev - 1], open_dir);
+                                    open_dir_count.set(prev - 1);
+                                    open_dir.close();
+                                }
+                                return Err(err.into());
+                            }
                         };
                         new_entry
                             .add_entry_with_store(
