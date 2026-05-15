@@ -6,7 +6,7 @@ This document provides guidance for maintaining the GitHub Actions workflows in 
 
 ### Overview
 
-The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig fmt) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
+The `format.yml` workflow runs code formatters (Prettier and clang-format) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
 
 ### Key Components
 
@@ -30,9 +30,9 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig 
 
 #### 2. Parallel Execution
 
-The workflow runs all three formatters simultaneously:
+The workflow runs the formatters simultaneously:
 
-- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`, `[zig]`)
+- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`)
 - Output is streamed in real-time without blocking
 - Uses GitHub Actions groups (`::group::`) for collapsible sections
 
@@ -44,20 +44,7 @@ The workflow runs all three formatters simultaneously:
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 
-##### Zig
-
-- Downloads from `oven-sh/zig` releases (musl build for static linking)
-- URL: `https://github.com/oven-sh/zig/releases/download/autobuild-{COMMIT}/bootstrap-x86_64-linux-musl.zip`
-- Extracts to temp directory to avoid polluting the repository
-- Directory structure: `bootstrap-x86_64-linux-musl/zig`
-
 ### Updating the Workflow
-
-#### To update Zig version:
-
-1. Find the new commit hash from https://github.com/oven-sh/zig/releases
-2. Replace the hash in the wget URL (line 65 of format.yml)
-3. Test that the URL is valid and the binary works
 
 #### To update clang-format version:
 
@@ -114,5 +101,4 @@ export LLVM_VERSION_MAJOR=19
 
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
-- The musl Zig build works on glibc systems due to static linking
 - Keep the exclusion list updated as new third-party code is added
