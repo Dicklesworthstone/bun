@@ -330,17 +330,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
-                            // Trim trailing path separators so that e.g.
-                            // "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
-                            let normalized_output = trim_trailing_path_separators(output_path);
+                            // Compare path entries tolerantly: trailing `/` and
+                            // `\` are ignored on every platform, and on Windows
+                            // slashes and ASCII case are normalized too.
                             // PORT NOTE: `std.mem.tokenizeScalar` skips empty
                             // segments; mirror with `split` + `filter`.
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
-                                let trimmed = trim_trailing_path_separators(entry);
-                                if strings::eql(trimmed, normalized_output) {
+                                if path_entries_equal(entry, output_path) {
                                     break 'warner;
                                 }
                             }
@@ -714,6 +713,27 @@ fn trim_trailing_path_separators(s: &[u8]) -> &[u8] {
         end -= 1;
     }
     &s[..end]
+}
+
+/// Compare two path slices for equality, tolerant of the differences that
+/// show up between a canonical `output_path` and a raw `$PATH` entry:
+/// - trailing `/` and `\` are ignored;
+/// - on Windows, `/` and `\` are interchangeable and ASCII case is ignored.
+fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
+    let a = trim_trailing_path_separators(a);
+    let b = trim_trailing_path_separators(b);
+    if cfg!(windows) {
+        if a.len() != b.len() {
+            return false;
+        }
+        a.iter().zip(b.iter()).all(|(&x, &y)| {
+            let nx = if x == b'/' { b'\\' } else { x.to_ascii_lowercase() };
+            let ny = if y == b'/' { b'\\' } else { y.to_ascii_lowercase() };
+            nx == ny
+        })
+    } else {
+        strings::eql(a, b)
+    }
 }
 
 fn print_node_modules_folder_structure(
