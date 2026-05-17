@@ -181,9 +181,10 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 ├── experiments/EXP-NNN/                                ← per-EXP standalone reproducers
 ├── experiments/EXP-109-kani/                           ← Kani symbolic proof harness
 ├── experiments/EXP-NNN-bun-<crate>-crate/              ← direct-Bun-crate witnesses
+├── experiments/layout_asserts/                         ← experiment-specific compile-asserts (4)
 ├── ast_grep_rules/                                     ← detector YAML rules (13)
 ├── loom_models/                                        ← runnable loom models (3 new)
-├── layout_asserts/                                     ← paste-ready compile-asserts (4)
+├── layout_asserts/                                     ← paste-ready compile-asserts (3)
 ├── operator_walkthrough/EXP-004.md                     ← 5-operator walkthrough
 ├── rejected_artifacts/                                 ← work demoted by review
 ├── scripts/                                            ← META infrastructure (14 scripts)
