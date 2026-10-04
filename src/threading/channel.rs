@@ -69,11 +69,9 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     }
 
     pub fn read_item(&self) -> Result<T, ChannelError> {
-        let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
-        // SAFETY: see try_read_item.
-        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
-        self.read_all(slice)?;
-        // SAFETY: read_all() filled all slots.
+        let mut items = [MaybeUninit::uninit()];
+        self.read_all(&mut items)?;
+        // SAFETY: successful read_all initialized the entire output slice.
         Ok(unsafe { items[0].assume_init_read() })
     }
 
@@ -83,7 +81,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(())
     }
 
-    pub(crate) fn read_all(&self, items: &mut [T]) -> Result<(), ChannelError> {
+    pub(crate) fn read_all(&self, items: &mut [MaybeUninit<T>]) -> Result<(), ChannelError> {
         let n = self.read_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
@@ -105,7 +103,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
                 }
                 // SAFETY: mutex is held; this &mut does not live across wait().
                 let buffer = unsafe { &mut *self.buffer.get() };
-                match buffer.write(items) {
+                match buffer.write_item(items[pushed]) {
                     Ok(()) => {}
                     Err(err) => {
                         if B::DYNAMIC {
@@ -132,31 +130,17 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(pushed)
     }
 
-    fn read_items(&self, items: &mut [T], should_block: bool) -> Result<usize, ChannelError> {
+    fn read_items(
+        &self,
+        items: &mut [MaybeUninit<T>],
+        should_block: bool,
+    ) -> Result<usize, ChannelError> {
         let _guard = self.mutex.lock_guard();
 
         let mut popped: usize = 0;
         while popped < items.len() {
-            // See write_items: re-derive UnsafeCell refs each iteration so no
-            // borrow lives across `getters.wait()` (which releases the mutex).
-            let new_item: Option<T> = 'blk: {
-                // SAFETY: mutex is held; this &mut does not live across wait().
-                let buffer = unsafe { &mut *self.buffer.get() };
-                // Buffer can contain null items but readItem will return null if the buffer is empty.
-                // we need to check if the buffer is empty before trying to read an item.
-                if buffer.readable_length() == 0 {
-                    if self.is_closed.get() {
-                        return Err(ChannelError::Closed);
-                    }
-                    break 'blk None;
-                }
-                let item = buffer.read_item();
-                self.putters.signal();
-                break 'blk item;
-            };
-
-            if let Some(item) = new_item {
-                items[popped] = item;
+            if let Some(item) = self.read_item_locked()? {
+                items[popped].write(item);
                 popped += 1;
             } else if should_block {
                 self.getters.wait(&self.mutex);
@@ -166,5 +150,56 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         }
 
         Ok(popped)
+    }
+
+    fn read_item_locked(&self) -> Result<Option<T>, ChannelError> {
+        // SAFETY: the caller holds the mutex; this borrow ends before wait().
+        let buffer = unsafe { &mut *self.buffer.get() };
+        if buffer.readable_length() == 0 {
+            return if self.is_closed.get() {
+                Err(ChannelError::Closed)
+            } else {
+                Ok(None)
+            };
+        }
+        let item = buffer
+            .read_item()
+            .expect("readable_length checked before read_item");
+        self.putters.signal();
+        Ok(Some(item))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Channel, ChannelError};
+
+    #[test]
+    fn single_item_reads_support_non_byte_payloads() {
+        let channel = Channel::<bool, super::StaticBuffer<bool, 2>>::init_static();
+        {
+            let _guard = channel.mutex.lock_guard();
+            assert_eq!(channel.read_item_locked(), Ok(None));
+        }
+        channel.write_item(true).unwrap();
+        assert_eq!(channel.read_item(), Ok(true));
+        channel.write_item(false).unwrap();
+        assert_eq!(channel.read_item(), Ok(false));
+        {
+            let _guard = channel.mutex.lock_guard();
+            channel.is_closed.set(true);
+        }
+        assert_eq!(channel.read_item(), Err(ChannelError::Closed));
+    }
+
+    #[test]
+    fn multi_item_write_appends_each_item_once() {
+        let channel = Channel::<u8, super::StaticBuffer<u8, 8>>::init_static();
+        assert_eq!(channel.write_items(&[1, 2, 3], false), Ok(3));
+        let mut out = [core::mem::MaybeUninit::uninit(); 3];
+        channel.read_all(&mut out).unwrap();
+        // SAFETY: successful read_all initialized all three slots.
+        assert_eq!(out.map(|item| unsafe { item.assume_init() }), [1, 2, 3]);
+        assert_eq!(channel.read_items(&mut out, false), Ok(0));
     }
 }
