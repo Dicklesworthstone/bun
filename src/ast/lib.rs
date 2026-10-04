@@ -1436,6 +1436,8 @@ pub enum Level {
 }
 // SAFETY: `#[repr(i8)]`, five variants, no payload — 1 byte, no padding.
 bun_core::unsafe_impl_atom!(Level);
+// SAFETY: `Level` is a plain Send enum with no thread-confined state.
+unsafe impl bun_core::AtomSend for Level {}
 
 impl Level {
     pub fn at_least(self, other: Level) -> bool {

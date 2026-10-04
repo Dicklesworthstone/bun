@@ -52,19 +52,10 @@ pub struct AtomicCell<T: Copy> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
-// no drop glue races. We bound on `T: Atom` (not `T: Send`) because `Atom`'s
-// safety contract includes cross-thread transport — that's what lets the
-// pointer specializations carry `*mut U` / `NonNull<U>` across threads
-// (matching `AtomicPtr<U>: Send + Sync` unconditionally) even though raw
-// pointers are `!Send`. What the receiving thread *does* with a loaded pointer
-// is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
-// unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
-// via `load()` would be a data race.
-unsafe impl<T: Atom> Sync for AtomicCell<T> {}
-// SAFETY: see the `Sync` justification above — the same invariants apply to
-// moving the cell itself across threads; `T: Copy` has no drop glue to race.
-unsafe impl<T: Atom> Send for AtomicCell<T> {}
+// SAFETY: Atom synchronizes access; AtomSend permits cross-thread values.
+unsafe impl<T: AtomSend> Sync for AtomicCell<T> {}
+// SAFETY: AtomSend permits moving the cell's owned value between threads.
+unsafe impl<T: AtomSend> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -161,13 +152,8 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   produced from a valid `Self`) yields the original value. This is weaker
 ///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
-/// - `Self` is safe to transport across threads when stored in an
-///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
-///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
-///   Raw pointers / `NonNull` qualify (the *pointee* may be thread-affine, but
-///   that's the caller's problem, exactly as with `AtomicPtr`). A `Copy`
-///   reference like `&Cell<_>` does **not** — it would alias unsynchronized
-///   interior mutability across threads.
+///
+/// Cross-thread transport additionally requires [`AtomSend`].
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.
@@ -185,6 +171,15 @@ pub unsafe trait Atom: Copy {
         failure: Ordering,
     ) -> Result<Self, Self>;
 }
+
+/// Allows an [`AtomicCell`] to publish owned values across threads.
+///
+/// # Safety
+///
+/// Moving values returned by the cell's atomic operations between threads
+/// must not violate their invariants. Raw pointers may opt in like
+/// `AtomicPtr`; dereferencing them remains the caller's responsibility.
+pub unsafe trait AtomSend: Atom {}
 
 /// Bit-reinterpret `a` as `B` without a size check (caller asserts the sizes
 /// match). Uses a `union` so the dead arms of the size-dispatch below remain
@@ -352,6 +347,17 @@ unsafe_impl_atom!(
     bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
 );
 
+macro_rules! unsafe_impl_builtin_atomsend {
+    ($($T:ty),+ $(,)?) => {$(
+        // SAFETY: primitive scalars have no thread-confined state.
+        unsafe impl AtomSend for $T {}
+    )+};
+}
+
+unsafe_impl_builtin_atomsend!(
+    bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
+);
+
 // Pointer specializations: route through `AtomicPtr` so provenance survives
 // the round-trip (the integer path would launder it to an int and back).
 
@@ -383,6 +389,9 @@ unsafe impl<U> Atom for *mut U {
         unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
     }
 }
+
+// SAFETY: transfers only an address, matching AtomicPtr's Send/Sync contract.
+unsafe impl<U> AtomSend for *mut U {}
 
 #[inline(always)]
 fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
@@ -428,6 +437,9 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         }
     }
 }
+
+// SAFETY: transfers only a nullable address, matching AtomicPtr's contract.
+unsafe impl<U> AtomSend for Option<NonNull<U>> {}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ThreadCell<T>
@@ -584,5 +596,56 @@ mod tests {
         let r = c.fetch_update(|cur| (5 > cur).then_some(5));
         assert_eq!(r, Err(10));
         assert_eq!(c.load(), 10);
+    }
+
+    #[test]
+    fn atomic_cell_atomsend_marker_is_required_for_send() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AtomicCell<u64>>();
+        assert_send_sync::<AtomicCell<*mut u8>>();
+        assert_send_sync::<AtomicCell<Option<NonNull<u8>>>>();
+
+        #[repr(C)]
+        #[derive(Copy, Clone)]
+        struct FunkyCopy {
+            bits: u32,
+            _not_send: core::marker::PhantomData<*const ()>,
+        }
+        // SAFETY: four initialized bytes with no padding; deliberately !Send.
+        crate::unsafe_impl_atom!(FunkyCopy);
+        let local = AtomicCell::new(FunkyCopy {
+            bits: 37,
+            _not_send: core::marker::PhantomData,
+        });
+        assert_eq!(local.load().bits, 37);
+
+        struct Probe<T: ?Sized>(core::marker::PhantomData<fn() -> T>);
+        trait NotSendA {
+            fn check_send(&self) {}
+        }
+        impl<T: ?Sized> NotSendA for Probe<T> {}
+        trait NotSendB {
+            fn check_send(&self) {}
+        }
+        impl<T: Send + ?Sized> NotSendB for Probe<T> {}
+        trait NotSyncA {
+            fn check_sync(&self) {}
+        }
+        impl<T: ?Sized> NotSyncA for Probe<T> {}
+        trait NotSyncB {
+            fn check_sync(&self) {}
+        }
+        impl<T: Sync + ?Sized> NotSyncB for Probe<T> {}
+
+        let send_sync = Probe::<()>(core::marker::PhantomData);
+        NotSendB::check_send(&send_sync);
+        NotSyncB::check_sync(&send_sync);
+
+        let value = Probe::<FunkyCopy>(core::marker::PhantomData);
+        value.check_send();
+        value.check_sync();
+        let cell = Probe::<AtomicCell<FunkyCopy>>(core::marker::PhantomData);
+        cell.check_send();
+        cell.check_sync();
     }
 }
