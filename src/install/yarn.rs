@@ -1,6 +1,7 @@
 use bun_collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
+use std::mem::MaybeUninit;
 
 use crate::Error;
 use bun_collections::{HashMap, StringHashMap, index_sort};
@@ -530,8 +531,8 @@ fn process_deps(
     dep_type: DependencyType,
     yarn_lock_: &YarnLock<'_>,
     string_buf_: &mut Semver::string::Buf,
-    deps_buf: &mut [Dependency],
-    res_buf: &mut [PackageID],
+    deps_buf: &mut [MaybeUninit<Dependency>],
+    res_buf: &mut [MaybeUninit<PackageID>],
     log: &mut bun_ast::Log,
     manager: &mut PackageManager,
     yarn_entry_to_package_id: &[PackageID],
@@ -588,9 +589,8 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
-                res_buf[count] = pkg_id;
+                deps_buf[count].write(dep);
+                res_buf[count].write(pkg_id);
                 count += 1;
             }
         }
@@ -815,13 +815,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     // raw pointers into the reserved capacity and set `len` at the end.
     let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
+    let mut dependencies_buf: &mut [MaybeUninit<Dependency>] = unsafe {
+        // SAFETY: reserved slots may be uninitialized; the view keeps that state.
+        bun_core::ffi::slice_mut(dependencies_base_ptr.cast(), num_deps as usize)
     };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
+    let mut resolutions_buf: &mut [MaybeUninit<PackageID>] = unsafe {
+        // SAFETY: reserved slots may be uninitialized; the view keeps that state.
+        bun_core::ffi::slice_mut(resolutions_base_ptr.cast(), num_deps as usize)
     };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
@@ -1159,30 +1159,23 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe {
-                    core::ptr::write(
-                        dependencies_buf
-                            .as_mut_ptr()
-                            .add(actual_root_dep_count as usize),
-                        Dependency {
-                            name: dep_name_string,
-                            name_hash,
-                            version: Dependency::parse(
-                                dep_name_string,
-                                Some(name_hash),
-                                version_string.slice(this.buffers.string_bytes.as_slice()),
-                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                                Some(&mut *log),
-                                Some(&mut *manager),
-                            )
-                            .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
-                        },
-                    );
-                }
+                dependencies_buf[actual_root_dep_count as usize].write(Dependency {
+                    name: dep_name_string,
+                    name_hash,
+                    version: Dependency::parse(
+                        dep_name_string,
+                        Some(name_hash),
+                        version_string.slice(this.buffers.string_bytes.as_slice()),
+                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                        Some(&mut *log),
+                        Some(&mut *manager),
+                    )
+                    .unwrap_or_default(),
+                    behavior: behavior_for(dep.dep_type, false),
+                });
 
-                resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
+                resolutions_buf[actual_root_dep_count as usize]
+                    .write(yarn_entry_to_package_id[idx]);
                 actual_root_dep_count += 1;
             }
         }
