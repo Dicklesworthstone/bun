@@ -61,7 +61,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
         self.mutex.lock();
-        GuardedLock { guarded: self }
+        GuardedLock {
+            guarded: self,
+            _not_send: core::marker::PhantomData,
+        }
     }
 
     /// Lock-free mutable access when the caller already has `&mut self`
@@ -77,6 +80,8 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 /// the underlying mutex when dropped.
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
+    // Mutex backends require unlock on the locking thread; shared guards could expose !Sync values.
+    _not_send: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'a, Value> GuardedLock<'a, Value, Mutex> {
@@ -132,5 +137,111 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Guarded, GuardedLock, Mutex};
+    use crate::Condition;
+    use core::cell::Cell;
+
+    macro_rules! assert_not_impl {
+        ($ty:ty, $bound:path) => {{
+            trait AmbiguousIfImpl<A> {
+                fn check() {}
+            }
+            impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+            struct ImplementsTrait;
+            impl<T: ?Sized + $bound> AmbiguousIfImpl<ImplementsTrait> for T {}
+            // Inference is ambiguous if the guard implements the forbidden trait.
+            let _ = <$ty as AmbiguousIfImpl<_>>::check;
+        }};
+    }
+
+    #[test]
+    fn guard_cannot_move_or_share_across_threads() {
+        assert_not_impl!(GuardedLock<'static, u32, Mutex>, Send);
+        assert_not_impl!(GuardedLock<'static, u32, Mutex>, Sync);
+        assert_not_impl!(GuardedLock<'static, Cell<u32>, Mutex>, Sync);
+
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Guarded<Cell<u32>>>();
+    }
+
+    #[test]
+    fn guard_preserves_pointer_sized_layout() {
+        assert_eq!(
+            core::mem::size_of::<GuardedLock<'_, u32, Mutex>>(),
+            core::mem::size_of::<&Guarded<u32>>()
+        );
+    }
+
+    #[test]
+    fn constructors_and_exclusive_access_preserve_values() {
+        let mut guarded = Guarded::new(4u32);
+        {
+            let mut guard = guarded.lock();
+            assert_eq!(*guard, 4);
+            *guard = 7;
+        }
+        assert_eq!(*guarded.lock(), 7);
+        *guarded.get_mut() = 9;
+        assert_eq!(*guarded.lock(), 9);
+
+        let initialized = Guarded::init(11u32);
+        assert_eq!(*initialized.lock(), 11);
+        let defaulted = Guarded::<u32>::default();
+        assert_eq!(*defaulted.lock(), 0);
+    }
+
+    #[test]
+    fn shared_guarded_value_serializes_contending_writers() {
+        let guarded = Guarded::new(Cell::new(0u32));
+        let start = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    start.wait();
+                    for _ in 0..250 {
+                        let guard = guarded.lock();
+                        guard.set(guard.get() + 1);
+                    }
+                });
+            }
+        });
+        assert_eq!(guarded.lock().get(), 1_000);
+    }
+
+    #[test]
+    fn condition_wait_relocks_the_same_guard_on_its_thread() {
+        let guarded = Guarded::new(0u32);
+        let condition = Condition::new();
+        std::thread::scope(|scope| {
+            let mut guard = guarded.lock();
+            let producer = scope.spawn(|| {
+                let mut guard = guarded.lock();
+                let initial = *guard;
+                *guard = 1;
+                condition.notify_one();
+                while *guard != 2 {
+                    condition.wait_guarded(&mut guard);
+                }
+                *guard = 3;
+                initial
+            });
+
+            while *guard == 0 {
+                condition.wait_guarded(&mut guard);
+            }
+            let observed = *guard;
+            *guard = 2;
+            condition.notify_one();
+            drop(guard);
+            let initial = producer.join().unwrap();
+            assert_eq!(initial, 0);
+            assert_eq!(observed, 1);
+            assert_eq!(*guarded.lock(), 3);
+        });
     }
 }
